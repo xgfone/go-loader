@@ -58,6 +58,7 @@ type file struct {
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader[T any] struct {
 	rsc *resource.Resource[[]T]
+	dec func(data []byte, dst any) error
 
 	dir   string
 	lock  sync.Mutex
@@ -74,6 +75,7 @@ func New[T any](dir string) *DirLoader[T] {
 
 	return &DirLoader[T]{
 		dir:   dir,
+		dec:   json.Unmarshal,
 		rsc:   resource.New[[]T](),
 		files: make(map[string]*file, 8),
 	}
@@ -83,6 +85,15 @@ func wrappanic(ctx context.Context) {
 	if r := recover(); r != nil {
 		slog.ErrorContext(ctx, "wrap a panic", "panic", r)
 	}
+}
+
+func (l *DirLoader[T]) SetDecoder(decode func(data []byte, dst any) error) *DirLoader[T] {
+	if decode == nil {
+		panic("DirLoader.SetDecoder: decode function must not be nil")
+	}
+
+	l.dec = decode
+	return l
 }
 
 // Sync is used to synchronize the resources to the chan ch periodically.
@@ -185,7 +196,7 @@ func (l *DirLoader[T]) decode(dst *[]T, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	return json.Unmarshal(data, dst)
+	return l.dec(data, dst)
 }
 
 func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
