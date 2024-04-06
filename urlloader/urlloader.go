@@ -107,6 +107,7 @@ func (l *UrlLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 			return
 		}
 
+		lastEtag = etag
 		if cb != nil {
 			cb(resource)
 		}
