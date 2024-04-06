@@ -19,6 +19,8 @@ package dirloader
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,10 +29,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/xgfone/go-loader/internal/comments"
@@ -61,9 +61,9 @@ type DirLoader[T any] struct {
 	dec func(data []byte, dst any) error
 
 	dir   string
+	last  time.Time
 	lock  sync.Mutex
 	files map[string]*file
-	epoch uint64
 }
 
 // New returns a new DirLoader with the directory.
@@ -150,8 +150,9 @@ func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 }
 
 func (l *DirLoader[T]) updateEpoch() {
-	epoch := atomic.AddUint64(&l.epoch, 1)
-	l.rsc.SetEtag(strconv.FormatUint(epoch, 10))
+	etag := l.last.Format(time.RFC3339)
+	md5sum := md5.Sum([]byte(etag))
+	l.rsc.SetEtag(hex.EncodeToString(md5sum[:]))
 }
 
 // Resource returns the inner resource.
@@ -202,6 +203,7 @@ func (l *DirLoader[T]) decode(dst *[]T, data []byte) error {
 }
 
 func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
+	last := l.last
 	for path, file := range l.files {
 		if file.last.Equal(file.now) {
 			continue
@@ -215,9 +217,14 @@ func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
 
 		file.data = comments.RemoveLineComments(file.buf.Bytes(), comments.CommentSlashes)
 		file.last = file.now
+
+		if file.last.modtime.After(last) {
+			last = file.last.modtime
+		}
 	}
 
-	if changed {
+	if changed && l.last.Equal(last) {
+		l.last = last
 		l.updateEpoch()
 	}
 
