@@ -87,6 +87,7 @@ func wrappanic(ctx context.Context) {
 	}
 }
 
+// SetDecoder sets the resource decoder.
 func (l *DirLoader[T]) SetDecoder(decode func(data []byte, dst any) error) *DirLoader[T] {
 	if decode == nil {
 		panic("DirLoader.SetDecoder: decode function must not be nil")
@@ -223,7 +224,7 @@ func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
 		}
 	}
 
-	if changed && l.last.Equal(last) {
+	if changed && !l.last.Equal(last) {
 		l.last = last
 		l.updateEpoch()
 	}
