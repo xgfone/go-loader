@@ -100,7 +100,7 @@ func (l *DirLoader[T]) SetDecoder(decode func(data []byte, dst any) error) *DirL
 // Sync is used to synchronize the resources to the chan ch periodically.
 //
 // If cb is nil, never call it when reload the resources.
-func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]T) (changed bool)) {
+func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]T)) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -123,11 +123,10 @@ func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 			return
 		}
 
-		if cb != nil && cb(resources) {
-			l.rsc.SetResource(resources)
-		}
-
 		lastEtag = etag
+		if cb != nil {
+			cb(resources)
+		}
 	}
 
 	// first laod
@@ -174,7 +173,8 @@ func (l *DirLoader[T]) Load() (resources []T, etag string, err error) {
 	if err != nil {
 		return
 	} else if !changed {
-		return l.rsc.Resource(), l.rsc.Etag(), nil
+		resources, etag = l.rsc.Get()
+		return
 	}
 
 	resources = make([]T, 0, len(l.files))
