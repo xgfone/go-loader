@@ -59,6 +59,7 @@ type file struct {
 type DirLoader[T any] struct {
 	rsc *resource.Resource[[]T]
 	dec func(data []byte, dst any) error
+	enc func(changed time.Time) string
 
 	dir   string
 	last  time.Time
@@ -76,6 +77,7 @@ func New[T any](dir string) *DirLoader[T] {
 	return &DirLoader[T]{
 		dir:   dir,
 		dec:   json.Unmarshal,
+		enc:   defaultEncodeEtag,
 		rsc:   resource.New[[]T](),
 		files: make(map[string]*file, 8),
 	}
@@ -95,6 +97,22 @@ func (l *DirLoader[T]) SetDecoder(decode func(data []byte, dst any) error) *DirL
 
 	l.dec = decode
 	return l
+}
+
+// SetEtagEncoder sets the etag encoder.
+func (l *DirLoader[T]) SetEtagEncoder(encode func(changed time.Time) string) *DirLoader[T] {
+	if encode == nil {
+		panic("DirLoader.SetEtagEncoder: encode function must not be nil")
+	}
+
+	l.enc = encode
+	return l
+}
+
+func defaultEncodeEtag(changed time.Time) string {
+	etag := changed.Format(time.RFC3339)
+	md5sum := md5.Sum([]byte(etag))
+	return hex.EncodeToString(md5sum[:])
 }
 
 // Sync is used to synchronize the resources to the chan ch periodically.
@@ -150,9 +168,7 @@ func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 }
 
 func (l *DirLoader[T]) updateEpoch() {
-	etag := l.last.Format(time.RFC3339)
-	md5sum := md5.Sum([]byte(etag))
-	l.rsc.SetEtag(hex.EncodeToString(md5sum[:]))
+	l.rsc.SetEtag(l.enc(l.last))
 }
 
 // Resource returns the inner resource.
