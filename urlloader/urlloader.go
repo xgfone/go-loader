@@ -34,7 +34,7 @@ type UrlLoader[T any] struct {
 	url string
 
 	decode func(data []byte, dst any) error
-	client *http.Client
+	sender func(*http.Request) (*http.Response, error)
 
 	lock sync.Mutex
 }
@@ -49,13 +49,18 @@ func New[T any](url string) *UrlLoader[T] {
 		url:    url,
 		rsc:    resource.New[T](),
 		decode: json.Unmarshal,
+		sender: http.DefaultClient.Do,
 	}
 }
 
-// SetClient resets the http client.
-func (l *UrlLoader[T]) SetClient(client *http.Client) *UrlLoader[T] {
+// SetSender sets the http request send function.
+func (l *UrlLoader[T]) SetSender(sender func(*http.Request) (*http.Response, error)) *UrlLoader[T] {
+	if sender == nil {
+		panic("UrlLoader.SetSender: request send function must not be nil")
+	}
+
 	l.lock.Lock()
-	l.client = client
+	l.sender = sender
 	l.lock.Unlock()
 	return l
 }
@@ -66,7 +71,9 @@ func (l *UrlLoader[T]) SetDecoder(decode func(data []byte, dst any) error) *UrlL
 		panic("UrlLoader.SetDecoder: decode function must not be nil")
 	}
 
+	l.lock.Lock()
 	l.decode = decode
+	l.lock.Unlock()
 	return l
 }
 
@@ -160,13 +167,7 @@ func (l *UrlLoader[T]) download() (err error) {
 		req.Header.Set("If-Match", etag)
 	}
 
-	var resp *http.Response
-	if l.client == nil {
-		resp, err = http.DefaultClient.Do(req)
-	} else {
-		resp, err = l.client.Do(req)
-	}
-
+	resp, err := l.sender(req)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
