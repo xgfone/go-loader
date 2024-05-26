@@ -110,7 +110,7 @@ func (l *UrlLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 			return
 		}
 
-		if etag == lastEtag {
+		if lastEtag != "" && etag == lastEtag {
 			return
 		}
 
