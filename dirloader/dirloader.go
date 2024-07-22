@@ -39,7 +39,7 @@ import (
 )
 
 // DefaultFileFilter is the default file filter.
-var DefaultFileFilter = AndFilter(IgnoreFilter, JsonFileFilter)
+var DefaultFileFilter = AndFilter(JsonFileFilter, DenyPrefixFileFilter("_"))
 
 // FileFilter is used to filter the files which are allowed.
 type FileFilter func(filename string) (ok bool)
@@ -68,24 +68,6 @@ func JsonFileFilter(filename string) bool {
 	return strings.HasSuffix(filename, ".json")
 }
 
-// IgnoreFilter is a file filter which only allows the filename not starting with "_".
-func IgnoreFilter(filename string) bool {
-	for _path := filename; len(_path) > 0; {
-		var name string
-		index := strings.IndexByte(_path, filepath.Separator)
-		if index < 0 {
-			name, _path = _path, ""
-		} else {
-			name, _path = _path[:index], _path[index+1:]
-		}
-
-		if strings.HasPrefix(name, "_") {
-			return false
-		}
-	}
-	return true
-}
-
 func AllowPrefixFileFilter(prefixes ...string) FileFilter {
 	return matchPreifxFileFilter(true, prefixes)
 }
@@ -100,14 +82,30 @@ func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 	}
 
 	return func(filename string) bool {
-		filename = filepath.Base(filename)
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(filename, prefix) {
-				return match
-			}
+		if matchprefixes(filename, prefixes) {
+			return match
 		}
 		return !match
 	}
+}
+
+func matchprefixes(refpath string, prefixes []string) bool {
+	for len(refpath) > 0 {
+		var name string
+		index := strings.IndexByte(refpath, filepath.Separator)
+		if index < 0 {
+			name, refpath = refpath, ""
+		} else {
+			name, refpath = refpath[:index], refpath[index+1:]
+		}
+
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(name, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 /// ----------------------------------------------------------------------- ///
