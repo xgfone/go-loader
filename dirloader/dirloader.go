@@ -112,13 +112,13 @@ func matchprefixes(refpath string, prefixes []string) bool {
 var DefaultFileDecoder = JsonFileDecoder
 
 // FileDecoder is used to decode the data of the file.
-type FileDecoder func(filename string, data []byte, dst any) error
+type FileDecoder func(dst any, file File) error
 
 // JsonFileDecoder is a json decoder which supports to remove the comment lines firstly.
-func JsonFileDecoder(_ string, data []byte, dst any) (err error) {
-	data = comments.RemoveLineComments(data, comments.CommentSlashes)
-	if len(data) > 0 {
-		err = json.Unmarshal(data, dst)
+func JsonFileDecoder(dst any, file File) (err error) {
+	file.Data = comments.RemoveLineComments(file.Data, comments.CommentSlashes)
+	if len(file.Data) > 0 {
+		err = json.Unmarshal(file.Data, dst)
 	}
 	return
 }
@@ -332,7 +332,7 @@ func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
 	resources = make(map[string]T, len(l.files))
 	for path, file := range l.files {
 		var resource T
-		if err = l.decode(&resource, file.buf.Bytes(), file.file.Path); err != nil {
+		if err = l.decode(&resource, file.file); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
@@ -348,11 +348,11 @@ func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
 	return
 }
 
-func (l *DirLoader[T]) decode(dst any, data []byte, filename string) error {
-	if len(data) == 0 {
+func (l *DirLoader[T]) decode(dst any, file File) error {
+	if len(file.Data) == 0 {
 		return nil
 	}
-	return l.decoder(filename, data, dst)
+	return l.decoder(dst, file)
 }
 
 func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
