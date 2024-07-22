@@ -73,6 +73,29 @@ func IgnoreFilter(filename string) bool {
 	return !strings.HasPrefix(filename, "_")
 }
 
+func AllowPrefixFileFilter(prefixes ...string) FileFilter {
+	return matchPreifxFileFilter(true, prefixes)
+}
+
+func DenyPrefixFileFilter(prefixes ...string) FileFilter {
+	return matchPreifxFileFilter(false, prefixes)
+}
+
+func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
+	if len(prefixes) == 0 {
+		return func(string) bool { return true }
+	}
+
+	return func(filename string) bool {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(filename, prefix) {
+				return match
+			}
+		}
+		return !match
+	}
+}
+
 /// ----------------------------------------------------------------------- ///
 
 // DefaultFileDecoder is the default file decoder.
