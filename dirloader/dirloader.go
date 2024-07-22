@@ -28,13 +28,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/xgfone/go-loader/internal/comments"
-	"github.com/xgfone/go-loader/internal/mapx"
 	"github.com/xgfone/go-loader/resource"
 )
 
@@ -161,7 +159,7 @@ type file struct {
 
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader[T any] struct {
-	rsc *resource.Resource[[]T]
+	rsc *resource.Resource[map[string]T]
 
 	dir   string
 	last  time.Time
@@ -182,7 +180,7 @@ func New[T any](dir string) *DirLoader[T] {
 
 	return (&DirLoader[T]{
 		dir:   dir,
-		rsc:   resource.New[[]T](),
+		rsc:   resource.New[map[string]T](),
 		files: make(map[string]*file, 8),
 	}).
 		SetFileFilter(DefaultFileFilter).
@@ -194,6 +192,11 @@ func wrappanic(ctx context.Context) {
 	if r := recover(); r != nil {
 		slog.ErrorContext(ctx, "wrap a panic", "panic", r)
 	}
+}
+
+// RootDir returns the root directory.
+func (l *DirLoader[T]) RootDir() string {
+	return l.dir
 }
 
 // SetFileFilter resets the file filter.
@@ -235,7 +238,7 @@ func (l *DirLoader[T]) SetEtagEncoder(encoder EtagEncoder) *DirLoader[T] {
 // Sync is used to synchronize the resources to the chan ch periodically.
 //
 // If cb is nil, never call it when reload the resources.
-func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]T)) {
+func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func(map[string]T)) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -289,12 +292,12 @@ func (l *DirLoader[T]) updateEpoch() {
 }
 
 // Resource returns the inner resource.
-func (l *DirLoader[T]) Resource() *resource.Resource[[]T] {
+func (l *DirLoader[T]) Resource() *resource.Resource[map[string]T] {
 	return l.rsc
 }
 
 // Load scans the files in the directory, loads and returns them if changed.
-func (l *DirLoader[T]) Load() (resources []T, etag string, err error) {
+func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -310,18 +313,14 @@ func (l *DirLoader[T]) Load() (resources []T, etag string, err error) {
 		return
 	}
 
-	resources = make([]T, 0, len(l.files))
-	paths := mapx.Keys(l.files)
-	slices.Sort(paths)
-	for _, path := range paths {
-		file := l.files[path]
-
-		var resource []T
+	resources = make(map[string]T, len(l.files))
+	for path, file := range l.files {
+		var resource T
 		if err = l.decode(&resource, file.buf.Bytes(), file.path); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
-		resources = append(resources, resource...)
+		resources[path] = resource
 	}
 
 	l.rsc.SetResource(resources)
@@ -329,7 +328,7 @@ func (l *DirLoader[T]) Load() (resources []T, etag string, err error) {
 	return
 }
 
-func (l *DirLoader[T]) decode(dst *[]T, data []byte, filename string) error {
+func (l *DirLoader[T]) decode(dst any, data []byte, filename string) error {
 	if len(data) == 0 {
 		return nil
 	}
