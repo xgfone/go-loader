@@ -40,7 +40,7 @@ import (
 var DefaultFileFilter = AndFilter(JsonFileFilter, DenyPrefixFileFilter("_"))
 
 // FileFilter is used to filter the files which are allowed.
-type FileFilter func(filename string) (ok bool)
+type FileFilter func(File) (ok bool)
 
 // AndFilter returns a file filter which allows the files
 // only if all the filters returns true.
@@ -51,9 +51,9 @@ func AndFilter(filters ...FileFilter) FileFilter {
 		}
 	}
 
-	return func(filename string) bool {
+	return func(file File) bool {
 		for _, filter := range filters {
-			if !filter(filename) {
+			if !filter(file) {
 				return false
 			}
 		}
@@ -62,8 +62,8 @@ func AndFilter(filters ...FileFilter) FileFilter {
 }
 
 // JsonFileFilter is a file filter which only allows the filename ending with ".json".
-func JsonFileFilter(filename string) bool {
-	return strings.HasSuffix(filename, ".json")
+func JsonFileFilter(file File) bool {
+	return strings.HasSuffix(file.Name, ".json")
 }
 
 func AllowPrefixFileFilter(prefixes ...string) FileFilter {
@@ -76,18 +76,20 @@ func DenyPrefixFileFilter(prefixes ...string) FileFilter {
 
 func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 	if len(prefixes) == 0 {
-		return func(string) bool { return true }
+		return func(File) bool { return true }
 	}
 
-	return func(filename string) bool {
-		if matchprefixes(filename, prefixes) {
+	return func(file File) bool {
+		if matchprefixes(file, prefixes) {
 			return match
 		}
 		return !match
 	}
 }
 
-func matchprefixes(refpath string, prefixes []string) bool {
+func matchprefixes(file File, prefixes []string) bool {
+	refpath := strings.TrimPrefix(file.Path, file.Root)
+	refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
 	for len(refpath) > 0 {
 		var name string
 		index := strings.IndexByte(refpath, filepath.Separator)
@@ -143,6 +145,7 @@ func Md5HexEtagEncoder(changed time.Time) string {
 // File represents a file.
 type File struct {
 	Name string
+	Root string
 	Path string
 	Data []byte
 }
@@ -406,9 +409,8 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 			return nil
 		}
 
-		refpath := strings.TrimPrefix(path, l.dir)
-		refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
-		if !l.filter(refpath) {
+		_file := File{Name: d.Name(), Root: l.dir, Path: path}
+		if !l.filter(_file) {
 			return nil
 		}
 
@@ -419,7 +421,6 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 
 		f, ok := l.files[path]
 		if !ok {
-			_file := File{Name: d.Name(), Path: path}
 			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), file: _file}
 			l.files[path] = f
 		}
