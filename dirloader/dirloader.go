@@ -169,6 +169,7 @@ type DirLoader[T any] struct {
 	filter  FileFilter
 	decoder FileDecoder
 	encoder func(changed time.Time) string
+	updater func(map[string]T) map[string]T
 }
 
 // New returns a new DirLoader with the directory.
@@ -197,6 +198,14 @@ func wrappanic(ctx context.Context) {
 // RootDir returns the root directory.
 func (l *DirLoader[T]) RootDir() string {
 	return l.dir
+}
+
+// SetResourceUpdater resets the updater to fix the loaded resource.
+func (l *DirLoader[T]) SetResourceUpdater(updater func(map[string]T) map[string]T) *DirLoader[T] {
+	l.lock.Lock()
+	l.updater = updater
+	l.lock.Unlock()
+	return l
 }
 
 // SetFileFilter resets the file filter.
@@ -321,6 +330,10 @@ func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
 			return
 		}
 		resources[path] = resource
+	}
+
+	if l.updater != nil {
+		resources = l.updater(resources)
 	}
 
 	l.rsc.SetResource(resources)
