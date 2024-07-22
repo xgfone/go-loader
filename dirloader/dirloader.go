@@ -75,11 +75,11 @@ func IgnoreFilter(filename string) bool {
 
 /// ----------------------------------------------------------------------- ///
 
-// FileDecoder is used to decode the data of the file.
-type FileDecoder func(data []byte, dst any) error
-
 // DefaultFileDecoder is the default file decoder.
 var DefaultFileDecoder = JsonFileDecoder
+
+// FileDecoder is used to decode the data of the file.
+type FileDecoder func(data []byte, dst any) error
 
 // JsonFileDecoder is a json decoder which supports to remove the comment lines firstly.
 func JsonFileDecoder(data []byte, dst any) (err error) {
@@ -88,6 +88,21 @@ func JsonFileDecoder(data []byte, dst any) (err error) {
 		err = json.Unmarshal(data, dst)
 	}
 	return
+}
+
+/// ----------------------------------------------------------------------- ///
+
+// DefaultEtagEncoder is the default etag encoder.
+var DefaultEtagEncoder = Md5HexEtagEncoder
+
+// EtagEncoder is used to encode etag of the files.
+type EtagEncoder func(changed time.Time) string
+
+// Md5HexEtagEncoder encodes the etag from the change time by md5+hex.
+func Md5HexEtagEncoder(changed time.Time) string {
+	etag := changed.Format(time.RFC3339)
+	md5sum := md5.Sum([]byte(etag))
+	return hex.EncodeToString(md5sum[:])
 }
 
 /// ----------------------------------------------------------------------- ///
@@ -111,7 +126,6 @@ type file struct {
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader[T any] struct {
 	rsc *resource.Resource[[]T]
-	enc func(changed time.Time) string
 
 	dir   string
 	last  time.Time
@@ -120,6 +134,7 @@ type DirLoader[T any] struct {
 
 	filter  FileFilter
 	decoder FileDecoder
+	encoder func(changed time.Time) string
 }
 
 // New returns a new DirLoader with the directory.
@@ -131,10 +146,12 @@ func New[T any](dir string) *DirLoader[T] {
 
 	return (&DirLoader[T]{
 		dir:   dir,
-		enc:   defaultEncodeEtag,
 		rsc:   resource.New[[]T](),
 		files: make(map[string]*file, 8),
-	}).SetFileFilter(DefaultFileFilter).SetFileDecoder(DefaultFileDecoder)
+	}).
+		SetFileFilter(DefaultFileFilter).
+		SetFileDecoder(DefaultFileDecoder).
+		SetEtagEncoder(DefaultEtagEncoder)
 }
 
 func wrappanic(ctx context.Context) {
@@ -167,20 +184,16 @@ func (l *DirLoader[T]) SetFileDecoder(decoder FileDecoder) *DirLoader[T] {
 	return l
 }
 
-// SetEtagEncoder sets the etag encoder.
-func (l *DirLoader[T]) SetEtagEncoder(encode func(changed time.Time) string) *DirLoader[T] {
-	if encode == nil {
-		panic("DirLoader.SetEtagEncoder: encode function must not be nil")
+// SetEtagEncoder resets the etag encoder.
+func (l *DirLoader[T]) SetEtagEncoder(encoder EtagEncoder) *DirLoader[T] {
+	if encoder == nil {
+		panic("DirLoader.SetEtagEncoder: etag encoder must not be nil")
 	}
 
-	l.enc = encode
+	l.lock.Lock()
+	l.encoder = encoder
+	l.lock.Unlock()
 	return l
-}
-
-func defaultEncodeEtag(changed time.Time) string {
-	etag := changed.Format(time.RFC3339)
-	md5sum := md5.Sum([]byte(etag))
-	return hex.EncodeToString(md5sum[:])
 }
 
 // Sync is used to synchronize the resources to the chan ch periodically.
@@ -236,7 +249,7 @@ func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 }
 
 func (l *DirLoader[T]) updateEpoch() {
-	l.rsc.SetEtag(l.enc(l.last))
+	l.rsc.SetEtag(l.encoder(l.last))
 }
 
 // Resource returns the inner resource.
