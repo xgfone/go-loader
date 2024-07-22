@@ -38,6 +38,43 @@ import (
 	"github.com/xgfone/go-loader/resource"
 )
 
+// DefaultFileFilter is the default file filter.
+var DefaultFileFilter = AndFilter(IgnoreFilter, JsonFileFilter)
+
+// FileFilter is used to filter the files which are allowed.
+type FileFilter func(filename string) (ok bool)
+
+// AndFilter returns a file filter which allows the files
+// only if all the filters returns true.
+func AndFilter(filters ...FileFilter) FileFilter {
+	for _, filter := range filters {
+		if filter == nil {
+			panic("AndFilter: filter must not be nil")
+		}
+	}
+
+	return func(filename string) bool {
+		for _, filter := range filters {
+			if !filter(filename) {
+				return false
+			}
+		}
+		return true
+	}
+}
+
+// JsonFileFilter is a file filter which only allows the filename ending with ".json".
+func JsonFileFilter(filename string) bool {
+	return strings.HasSuffix(filename, ".json")
+}
+
+// IgnoreFilter is a file filter which only allows the filename not starting with "_".
+func IgnoreFilter(filename string) bool {
+	return !strings.HasPrefix(filename, "_")
+}
+
+/// ----------------------------------------------------------------------- ///
+
 type info struct {
 	modtime time.Time
 	size    int64
@@ -65,6 +102,8 @@ type DirLoader[T any] struct {
 	last  time.Time
 	lock  sync.Mutex
 	files map[string]*file
+
+	filter FileFilter
 }
 
 // New returns a new DirLoader with the directory.
@@ -74,19 +113,31 @@ func New[T any](dir string) *DirLoader[T] {
 		panic(err)
 	}
 
-	return &DirLoader[T]{
+	return (&DirLoader[T]{
 		dir:   dir,
 		dec:   json.Unmarshal,
 		enc:   defaultEncodeEtag,
 		rsc:   resource.New[[]T](),
 		files: make(map[string]*file, 8),
-	}
+	}).SetFileFilter(DefaultFileFilter)
 }
 
 func wrappanic(ctx context.Context) {
 	if r := recover(); r != nil {
 		slog.ErrorContext(ctx, "wrap a panic", "panic", r)
 	}
+}
+
+// SetFileFilter resets the file filter.
+func (l *DirLoader[T]) SetFileFilter(filter FileFilter) *DirLoader[T] {
+	if filter == nil {
+		panic("DirLoader.SetFileFilter: file filter must not be nil")
+	}
+
+	l.lock.Lock()
+	l.filter = filter
+	l.lock.Unlock()
+	return l
 }
 
 // SetDecoder sets the resource decoder.
@@ -271,7 +322,7 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 			return nil
 		}
 
-		if name := d.Name(); strings.HasPrefix(name, "_") || !strings.HasSuffix(name, ".json") {
+		if !l.filter(d.Name()) {
 			return nil
 		}
 
