@@ -42,6 +42,31 @@ var DefaultFileFilter = AndFilter(JsonFileFilter, DenyPrefixFileFilter("_"))
 // FileFilter is used to filter the files which are allowed.
 type FileFilter func(File) (ok bool)
 
+func alwaysTrueFilter(File) bool { return true }
+
+// OrFilter returns a file filter which allows the files
+// only if any of filters returns true.
+func OrFilter(filters ...FileFilter) FileFilter {
+	for _, filter := range filters {
+		if filter == nil {
+			panic("OrFilter: filter must not be nil")
+		}
+	}
+
+	if len(filters) == 0 {
+		return alwaysTrueFilter
+	}
+
+	return func(file File) bool {
+		for _, filter := range filters {
+			if filter(file) {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 // AndFilter returns a file filter which allows the files
 // only if all the filters returns true.
 func AndFilter(filters ...FileFilter) FileFilter {
@@ -49,6 +74,10 @@ func AndFilter(filters ...FileFilter) FileFilter {
 		if filter == nil {
 			panic("AndFilter: filter must not be nil")
 		}
+	}
+
+	if len(filters) == 0 {
+		return alwaysTrueFilter
 	}
 
 	return func(file File) bool {
@@ -76,7 +105,7 @@ func DenyPrefixFileFilter(prefixes ...string) FileFilter {
 
 func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 	if len(prefixes) == 0 {
-		return func(File) bool { return true }
+		return alwaysTrueFilter
 	}
 
 	return func(file File) bool {
