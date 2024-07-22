@@ -141,7 +141,7 @@ func (i info) Equal(other info) bool {
 
 type file struct {
 	buf  *bytes.Buffer
-	name string
+	path string
 
 	last info
 	now  info
@@ -305,7 +305,7 @@ func (l *DirLoader[T]) Load() (resources []T, etag string, err error) {
 		file := l.files[path]
 
 		var resource []T
-		if err = l.decode(&resource, file.buf.Bytes(), file.name); err != nil {
+		if err = l.decode(&resource, file.buf.Bytes(), file.path); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
@@ -399,7 +399,7 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 
 		f, ok := l.files[path]
 		if !ok {
-			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), name: d.Name()}
+			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), path: path}
 			l.files[path] = f
 		}
 
