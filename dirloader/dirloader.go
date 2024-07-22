@@ -140,6 +140,13 @@ func Md5HexEtagEncoder(changed time.Time) string {
 
 /// ----------------------------------------------------------------------- ///
 
+// File represents a file.
+type File struct {
+	Name string
+	Path string
+	Data []byte
+}
+
 type info struct {
 	modtime time.Time
 	size    int64
@@ -151,7 +158,7 @@ func (i info) Equal(other info) bool {
 
 type file struct {
 	buf  *bytes.Buffer
-	path string
+	file File
 
 	last info
 	now  info
@@ -325,7 +332,7 @@ func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
 	resources = make(map[string]T, len(l.files))
 	for path, file := range l.files {
 		var resource T
-		if err = l.decode(&resource, file.buf.Bytes(), file.path); err != nil {
+		if err = l.decode(&resource, file.buf.Bytes(), file.file.Path); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
@@ -360,6 +367,7 @@ func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
 			err = fmt.Errorf("fail to read the file '%s': %w", path, err)
 			return
 		}
+		file.file.Data = file.buf.Bytes()
 
 		file.last = file.now
 		if file.last.modtime.After(last) {
@@ -411,7 +419,8 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 
 		f, ok := l.files[path]
 		if !ok {
-			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), path: path}
+			_file := File{Name: d.Name(), Path: path}
+			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), file: _file}
 			l.files[path] = f
 		}
 
