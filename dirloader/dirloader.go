@@ -75,6 +75,23 @@ func IgnoreFilter(filename string) bool {
 
 /// ----------------------------------------------------------------------- ///
 
+// FileDecoder is used to decode the data of the file.
+type FileDecoder func(data []byte, dst any) error
+
+// DefaultFileDecoder is the default file decoder.
+var DefaultFileDecoder = JsonFileDecoder
+
+// JsonFileDecoder is a json decoder which supports to remove the comment lines firstly.
+func JsonFileDecoder(data []byte, dst any) (err error) {
+	data = comments.RemoveLineComments(data, comments.CommentSlashes)
+	if len(data) > 0 {
+		err = json.Unmarshal(data, dst)
+	}
+	return
+}
+
+/// ----------------------------------------------------------------------- ///
+
 type info struct {
 	modtime time.Time
 	size    int64
@@ -85,8 +102,7 @@ func (i info) Equal(other info) bool {
 }
 
 type file struct {
-	buf  *bytes.Buffer
-	data []byte
+	buf *bytes.Buffer
 
 	last info
 	now  info
@@ -95,7 +111,6 @@ type file struct {
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader[T any] struct {
 	rsc *resource.Resource[[]T]
-	dec func(data []byte, dst any) error
 	enc func(changed time.Time) string
 
 	dir   string
@@ -103,7 +118,8 @@ type DirLoader[T any] struct {
 	lock  sync.Mutex
 	files map[string]*file
 
-	filter FileFilter
+	filter  FileFilter
+	decoder FileDecoder
 }
 
 // New returns a new DirLoader with the directory.
@@ -115,11 +131,10 @@ func New[T any](dir string) *DirLoader[T] {
 
 	return (&DirLoader[T]{
 		dir:   dir,
-		dec:   json.Unmarshal,
 		enc:   defaultEncodeEtag,
 		rsc:   resource.New[[]T](),
 		files: make(map[string]*file, 8),
-	}).SetFileFilter(DefaultFileFilter)
+	}).SetFileFilter(DefaultFileFilter).SetFileDecoder(DefaultFileDecoder)
 }
 
 func wrappanic(ctx context.Context) {
@@ -140,13 +155,15 @@ func (l *DirLoader[T]) SetFileFilter(filter FileFilter) *DirLoader[T] {
 	return l
 }
 
-// SetDecoder sets the resource decoder.
-func (l *DirLoader[T]) SetDecoder(decode func(data []byte, dst any) error) *DirLoader[T] {
-	if decode == nil {
-		panic("DirLoader.SetDecoder: decode function must not be nil")
+// SetFileDecoder resets the file decoder.
+func (l *DirLoader[T]) SetFileDecoder(decoder FileDecoder) *DirLoader[T] {
+	if decoder == nil {
+		panic("DirLoader.SetFileDecoder: file decoder must not be nil")
 	}
 
-	l.dec = decode
+	l.lock.Lock()
+	l.decoder = decoder
+	l.lock.Unlock()
 	return l
 }
 
@@ -251,7 +268,7 @@ func (l *DirLoader[T]) Load() (resources []T, etag string, err error) {
 		file := l.files[path]
 
 		var resource []T
-		if err = l.decode(&resource, file.data); err != nil {
+		if err = l.decode(&resource, file.buf.Bytes()); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
@@ -267,7 +284,7 @@ func (l *DirLoader[T]) decode(dst *[]T, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	return l.dec(data, dst)
+	return l.decoder(data, dst)
 }
 
 func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
@@ -283,9 +300,7 @@ func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
 			return
 		}
 
-		file.data = comments.RemoveLineComments(file.buf.Bytes(), comments.CommentSlashes)
 		file.last = file.now
-
 		if file.last.modtime.After(last) {
 			last = file.last.modtime
 		}
