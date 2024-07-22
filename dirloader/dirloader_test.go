@@ -28,7 +28,10 @@ func checkerr(t *testing.T, err error) {
 }
 
 func TestDirLoader(t *testing.T) {
-	const root = "testdir"
+	root, err := filepath.Abs("testdir")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ignoredir := filepath.Join(root, "_ignoredir")
 	subdir1 := filepath.Join(root, "dir1")
@@ -42,24 +45,30 @@ func TestDirLoader(t *testing.T) {
 		_ = os.RemoveAll(root)
 	}()
 
-	checkerr(t, os.WriteFile(filepath.Join(ignoredir, "file1.json"), []byte(`[{"Name": "111", "Age": 111}]`), 0600))
-	checkerr(t, os.WriteFile(filepath.Join(subdir1, "_file2.json"), []byte(`[{"Name": "222", "Age": 222}]`), 0600))
-	checkerr(t, os.WriteFile(filepath.Join(subdir1, "file3.json"), []byte(`[{"Name": "333", "Age": 333}]`), 0600))
-	checkerr(t, os.WriteFile(filepath.Join(subdir2, "file4.json"), []byte(`[{"Name": "444", "Age": 444}]`), 0600))
-	checkerr(t, os.WriteFile(filepath.Join(subdir2, "file5.json"), []byte(`[{"Name": "555", "Age": 555}]`), 0600))
+	file1 := filepath.Join(ignoredir, "file1.json")
+	file2 := filepath.Join(subdir1, "_file2.json")
+	file3 := filepath.Join(subdir1, "file3.json")
+	file4 := filepath.Join(subdir2, "file4.json")
+	file5 := filepath.Join(subdir2, "file5.json")
+
+	checkerr(t, os.WriteFile(file1, []byte(`[{"Name": "111", "Age": 111}]`), 0600))
+	checkerr(t, os.WriteFile(file2, []byte(`[{"Name": "222", "Age": 222}]`), 0600))
+	checkerr(t, os.WriteFile(file3, []byte(`[{"Name": "333", "Age": 333}]`), 0600))
+	checkerr(t, os.WriteFile(file4, []byte(`[{"Name": "444", "Age": 444}]`), 0600))
+	checkerr(t, os.WriteFile(file5, []byte(`[{"Name": "555", "Age": 555}]`), 0600))
 
 	type Person struct {
 		Name string
 		Age  int
 	}
 
-	expects := []Person{
-		{Name: "333", Age: 333},
-		{Name: "444", Age: 444},
-		{Name: "555", Age: 555},
+	expects := map[string][]Person{
+		file3: {{Name: "333", Age: 333}},
+		file4: {{Name: "444", Age: 444}},
+		file5: {{Name: "555", Age: 555}},
 	}
 
-	loader := New[Person](root)
+	loader := New[[]Person](root)
 	persons, _, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)
