@@ -70,7 +70,20 @@ func JsonFileFilter(filename string) bool {
 
 // IgnoreFilter is a file filter which only allows the filename not starting with "_".
 func IgnoreFilter(filename string) bool {
-	return !strings.HasPrefix(filename, "_")
+	for _path := filename; len(_path) > 0; {
+		var name string
+		index := strings.IndexByte(_path, filepath.Separator)
+		if index < 0 {
+			name, _path = _path, ""
+		} else {
+			name, _path = _path[:index], _path[index+1:]
+		}
+
+		if strings.HasPrefix(name, "_") {
+			return false
+		}
+	}
+	return true
 }
 
 func AllowPrefixFileFilter(prefixes ...string) FileFilter {
@@ -87,6 +100,7 @@ func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 	}
 
 	return func(filename string) bool {
+		filename = filepath.Base(filename)
 		for _, prefix := range prefixes {
 			if strings.HasPrefix(filename, prefix) {
 				return match
@@ -374,22 +388,10 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 			return nil
 		}
 
-		if !l.filter(d.Name()) {
+		refpath := strings.TrimPrefix(path, l.dir)
+		refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
+		if !l.filter(refpath) {
 			return nil
-		}
-
-		for _path := strings.TrimPrefix(path, l.dir); len(_path) > 0; {
-			var name string
-			index := strings.IndexByte(_path, filepath.Separator)
-			if index < 0 {
-				name, _path = _path, ""
-			} else {
-				name, _path = _path[:index], _path[index+1:]
-			}
-
-			if strings.HasPrefix(name, "_") {
-				return nil
-			}
 		}
 
 		fi, err := d.Info()
