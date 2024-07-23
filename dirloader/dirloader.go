@@ -189,11 +189,11 @@ func DecodeSliceFileHandler[T any](files []File) (any, error) {
 var DefaultEtagEncoder = Md5HexEtagEncoder
 
 // EtagEncoder is used to encode etag of the files.
-type EtagEncoder func(changed time.Time) string
+type EtagEncoder func(modtime time.Time) string
 
 // Md5HexEtagEncoder encodes the etag from the change time by md5+hex.
-func Md5HexEtagEncoder(changed time.Time) string {
-	etag := changed.Format(time.RFC3339)
+func Md5HexEtagEncoder(modtime time.Time) string {
+	etag := modtime.Format(time.RFC3339)
 	md5sum := md5.Sum([]byte(etag))
 	return hex.EncodeToString(md5sum[:])
 }
@@ -206,8 +206,6 @@ type File struct {
 	Root string
 	Path string
 	Data []byte
-
-	Extra any
 }
 
 type info struct {
