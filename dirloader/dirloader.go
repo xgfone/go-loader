@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -32,6 +33,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/xgfone/go-loader/internal/comments"
 	"github.com/xgfone/go-loader/resource"
 )
 
@@ -138,13 +140,34 @@ func matchprefixes(file File, prefixes []string) bool {
 
 /// ----------------------------------------------------------------------- ///
 
+// DefaultFileDecoder is the default file decoder.
+var DefaultFileDecoder = JsonFileDecoder
+
+// FileDecoder is used to decode the data of the file.
+type FileDecoder func(any, File) error
+
+// JsonFileDecoder is a json decoder which supports to remove the comment lines firstly.
+func JsonFileDecoder(dst any, file File) (err error) {
+	if len(file.Data) == 0 {
+		return
+	}
+
+	file.Data = comments.RemoveLineComments(file.Data, comments.CommentSlashes)
+	if len(file.Data) > 0 {
+		err = json.Unmarshal(file.Data, dst)
+	}
+	return
+}
+
+/// ----------------------------------------------------------------------- ///
+
 // FileHandler is used to handle the loaded files.
-type FileHandler func([]File) ([]File, error)
+type FileHandler func([]File) (any, error)
 
 // DefaultFileHandler is the default file handler.
 var DefaultFileHandler = noopFileHandler
 
-func noopFileHandler(files []File) ([]File, error) { return files, nil }
+func noopFileHandler(files []File) (any, error) { return files, nil }
 
 /// ----------------------------------------------------------------------- ///
 
@@ -192,12 +215,13 @@ type file struct {
 
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader struct {
-	rsc *resource.Resource[[]File]
+	rsc *resource.Resource[any]
 
 	dir   string
 	last  time.Time
 	lock  sync.Mutex
 	files map[string]*file
+	etag  string
 
 	filter  FileFilter
 	handler FileHandler
@@ -213,7 +237,7 @@ func New(dir string) *DirLoader {
 
 	return (&DirLoader{
 		dir:   dir,
-		rsc:   resource.New[[]File](),
+		rsc:   resource.New[any](),
 		files: make(map[string]*file, 8),
 	}).
 		SetFileFilter(DefaultFileFilter).
@@ -268,10 +292,13 @@ func (l *DirLoader) SetEtagEncoder(encoder EtagEncoder) *DirLoader {
 	return l
 }
 
+func (l *DirLoader) updateEpoch()     { l.etag = l.encoder(l.last) }
+func (l *DirLoader) getEpoch() string { return l.etag }
+
 // Sync is used to synchronize the resources to the chan ch periodically.
 //
 // If cb is nil, never call it when reload the resources.
-func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-chan struct{}, cb func([]File)) {
+func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-chan struct{}, cb func(any)) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -279,24 +306,22 @@ func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-c
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	var lastEtag string
 	load := func() {
 		defer wrappanic(ctx)
 		slog.LogAttrs(ctx, slog.LevelDebug-4, "start to load the resource", slog.String("dir", l.dir))
 
-		resources, etag, err := l.Load()
+		changed, err := l.Load()
 		if err != nil {
 			slog.Error("fail to load the resources from the local files", "dir", l.dir, "err", err)
 			return
 		}
 
-		if lastEtag != "" && etag == lastEtag {
+		if !changed {
 			return
 		}
 
-		lastEtag = etag
 		if cb != nil {
-			cb(resources)
+			cb(l.Resource().Resource())
 		}
 	}
 
@@ -320,17 +345,12 @@ func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-c
 	}
 }
 
-func (l *DirLoader) updateEpoch() {
-	l.rsc.SetEtag(l.encoder(l.last))
-}
-
 // Resource returns the inner resource.
-func (l *DirLoader) Resource() *resource.Resource[[]File] {
-	return l.rsc
-}
+func (l *DirLoader) Resource() *resource.Resource[any] { return l.rsc }
+func (l *DirLoader) setrsc(rsc any, etag string)       { l.rsc.Set(rsc, etag) }
 
 // Load scans the files in the directory, loads and returns them if changed.
-func (l *DirLoader) Load() (files []File, etag string, err error) {
+func (l *DirLoader) Load() (changed bool, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -338,15 +358,11 @@ func (l *DirLoader) Load() (files []File, etag string, err error) {
 		return
 	}
 
-	changed, err := l.checkfiles()
-	if err != nil {
-		return
-	} else if !changed {
-		files, etag = l.rsc.Get()
+	if changed, err = l.checkfiles(); err != nil || !changed {
 		return
 	}
 
-	files = make([]File, 0, len(l.files))
+	files := make([]File, 0, len(l.files))
 	for _, file := range l.files {
 		files = append(files, file.file)
 	}
@@ -354,13 +370,12 @@ func (l *DirLoader) Load() (files []File, etag string, err error) {
 		return files[i].Path < files[j].Path
 	})
 
-	files, err = l.handler(files)
+	rsc, err := l.handler(files)
 	if err != nil {
 		return
 	}
 
-	l.rsc.SetResource(files)
-	etag = l.rsc.Etag()
+	l.setrsc(rsc, l.getEpoch())
 	return
 }
 
