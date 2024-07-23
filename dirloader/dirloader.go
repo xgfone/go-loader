@@ -41,9 +41,9 @@ import (
 var DefaultFileFilter = AndFilter(JsonFileFilter, DenyPrefixFileFilter("_"))
 
 // FileFilter is used to filter the files which are allowed.
-type FileFilter func(File) (ok bool)
+type FileFilter func(FileInfo) (ok bool)
 
-func alwaysTrueFilter(File) bool { return true }
+func alwaysTrueFilter(FileInfo) bool { return true }
 
 // OrFilter returns a file filter which allows the files
 // only if any of filters returns true.
@@ -58,7 +58,7 @@ func OrFilter(filters ...FileFilter) FileFilter {
 		return alwaysTrueFilter
 	}
 
-	return func(file File) bool {
+	return func(file FileInfo) bool {
 		for _, filter := range filters {
 			if filter(file) {
 				return true
@@ -81,7 +81,7 @@ func AndFilter(filters ...FileFilter) FileFilter {
 		return alwaysTrueFilter
 	}
 
-	return func(file File) bool {
+	return func(file FileInfo) bool {
 		for _, filter := range filters {
 			if !filter(file) {
 				return false
@@ -92,7 +92,7 @@ func AndFilter(filters ...FileFilter) FileFilter {
 }
 
 // JsonFileFilter is a file filter which only allows the filename ending with ".json".
-func JsonFileFilter(file File) bool {
+func JsonFileFilter(file FileInfo) bool {
 	return strings.HasSuffix(file.Name, ".json")
 }
 
@@ -109,7 +109,7 @@ func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 		return alwaysTrueFilter
 	}
 
-	return func(file File) bool {
+	return func(file FileInfo) bool {
 		if matchprefixes(file, prefixes) {
 			return match
 		}
@@ -117,7 +117,7 @@ func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 	}
 }
 
-func matchprefixes(file File, prefixes []string) bool {
+func matchprefixes(file FileInfo, prefixes []string) bool {
 	refpath := strings.TrimPrefix(file.Path, file.Root)
 	refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
 	for len(refpath) > 0 {
@@ -144,10 +144,10 @@ func matchprefixes(file File, prefixes []string) bool {
 var DefaultFileDecoder = JsonFileDecoder
 
 // FileDecoder is used to decode the data of the file.
-type FileDecoder func(dst any, file File) error
+type FileDecoder func(any, FileInfo) error
 
 // JsonFileDecoder is a json decoder which supports to remove the comment lines firstly.
-func JsonFileDecoder(dst any, file File) (err error) {
+func JsonFileDecoder(dst any, file FileInfo) (err error) {
 	file.Data = comments.RemoveLineComments(file.Data, comments.CommentSlashes)
 	if len(file.Data) > 0 {
 		err = json.Unmarshal(file.Data, dst)
@@ -172,8 +172,8 @@ func Md5HexEtagEncoder(changed time.Time) string {
 
 /// ----------------------------------------------------------------------- ///
 
-// File represents a file.
-type File struct {
+// FileInfo represents a file.
+type FileInfo struct {
 	Name string
 	Root string
 	Path string
@@ -191,20 +191,20 @@ func (i info) Equal(other info) bool {
 
 type file struct {
 	buf  *bytes.Buffer
-	file File
+	file FileInfo
 
 	last info
 	now  info
 }
 
-type DirFile[T any] struct {
-	File
-	Obj T
+type File[T any] struct {
+	Info FileInfo
+	Obj  T
 }
 
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader[T any] struct {
-	rsc *resource.Resource[[]DirFile[T]]
+	rsc *resource.Resource[[]File[T]]
 
 	dir   string
 	last  time.Time
@@ -214,7 +214,7 @@ type DirLoader[T any] struct {
 	filter  FileFilter
 	decoder FileDecoder
 	encoder func(changed time.Time) string
-	updater func([]DirFile[T]) []DirFile[T]
+	updater func([]File[T]) []File[T]
 }
 
 // New returns a new DirLoader with the directory.
@@ -226,7 +226,7 @@ func New[T any](dir string) *DirLoader[T] {
 
 	return (&DirLoader[T]{
 		dir:   dir,
-		rsc:   resource.New[[]DirFile[T]](),
+		rsc:   resource.New[[]File[T]](),
 		files: make(map[string]*file, 8),
 	}).
 		SetFileFilter(DefaultFileFilter).
@@ -246,7 +246,7 @@ func (l *DirLoader[T]) RootDir() string {
 }
 
 // SetResourceUpdater resets the updater to fix the loaded resource.
-func (l *DirLoader[T]) SetResourceUpdater(updater func([]DirFile[T]) []DirFile[T]) *DirLoader[T] {
+func (l *DirLoader[T]) SetResourceUpdater(updater func([]File[T]) []File[T]) *DirLoader[T] {
 	l.lock.Lock()
 	l.updater = updater
 	l.lock.Unlock()
@@ -292,7 +292,7 @@ func (l *DirLoader[T]) SetEtagEncoder(encoder EtagEncoder) *DirLoader[T] {
 // Sync is used to synchronize the resources to the chan ch periodically.
 //
 // If cb is nil, never call it when reload the resources.
-func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]DirFile[T])) {
+func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]File[T])) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -346,12 +346,12 @@ func (l *DirLoader[T]) updateEpoch() {
 }
 
 // Resource returns the inner resource.
-func (l *DirLoader[T]) Resource() *resource.Resource[[]DirFile[T]] {
+func (l *DirLoader[T]) Resource() *resource.Resource[[]File[T]] {
 	return l.rsc
 }
 
 // Load scans the files in the directory, loads and returns them if changed.
-func (l *DirLoader[T]) Load() (files []DirFile[T], etag string, err error) {
+func (l *DirLoader[T]) Load() (files []File[T], etag string, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -367,17 +367,19 @@ func (l *DirLoader[T]) Load() (files []DirFile[T], etag string, err error) {
 		return
 	}
 
-	files = make([]DirFile[T], 0, len(l.files))
+	files = make([]File[T], 0, len(l.files))
 	for path, file := range l.files {
 		var obj T
 		if err = l.decode(&obj, file.file); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
-		files = append(files, DirFile[T]{File: file.file, Obj: obj})
+		files = append(files, File[T]{Info: file.file, Obj: obj})
 	}
 
-	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Info.Path < files[j].Info.Path
+	})
 
 	if l.updater != nil {
 		files = l.updater(files)
@@ -388,7 +390,7 @@ func (l *DirLoader[T]) Load() (files []DirFile[T], etag string, err error) {
 	return
 }
 
-func (l *DirLoader[T]) decode(dst any, file File) error {
+func (l *DirLoader[T]) decode(dst any, file FileInfo) error {
 	if len(file.Data) == 0 {
 		return nil
 	}
@@ -446,7 +448,7 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 			return nil
 		}
 
-		_file := File{Name: d.Name(), Root: l.dir, Path: path}
+		_file := FileInfo{Name: d.Name(), Root: l.dir, Path: path}
 		if !l.filter(_file) {
 			return nil
 		}
