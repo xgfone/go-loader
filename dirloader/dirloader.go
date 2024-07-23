@@ -21,7 +21,6 @@ import (
 	"context"
 	"crypto/md5"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -33,7 +32,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xgfone/go-loader/internal/comments"
 	"github.com/xgfone/go-loader/resource"
 )
 
@@ -41,9 +39,9 @@ import (
 var DefaultFileFilter = AndFilter(JsonFileFilter, DenyPrefixFileFilter("_"))
 
 // FileFilter is used to filter the files which are allowed.
-type FileFilter func(FileInfo) (ok bool)
+type FileFilter func(File) (ok bool)
 
-func alwaysTrueFilter(FileInfo) bool { return true }
+func alwaysTrueFilter(File) bool { return true }
 
 // OrFilter returns a file filter which allows the files
 // only if any of filters returns true.
@@ -58,7 +56,7 @@ func OrFilter(filters ...FileFilter) FileFilter {
 		return alwaysTrueFilter
 	}
 
-	return func(file FileInfo) bool {
+	return func(file File) bool {
 		for _, filter := range filters {
 			if filter(file) {
 				return true
@@ -81,7 +79,7 @@ func AndFilter(filters ...FileFilter) FileFilter {
 		return alwaysTrueFilter
 	}
 
-	return func(file FileInfo) bool {
+	return func(file File) bool {
 		for _, filter := range filters {
 			if !filter(file) {
 				return false
@@ -92,7 +90,7 @@ func AndFilter(filters ...FileFilter) FileFilter {
 }
 
 // JsonFileFilter is a file filter which only allows the filename ending with ".json".
-func JsonFileFilter(file FileInfo) bool {
+func JsonFileFilter(file File) bool {
 	return strings.HasSuffix(file.Name, ".json")
 }
 
@@ -109,7 +107,7 @@ func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 		return alwaysTrueFilter
 	}
 
-	return func(file FileInfo) bool {
+	return func(file File) bool {
 		if matchprefixes(file, prefixes) {
 			return match
 		}
@@ -117,7 +115,7 @@ func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
 	}
 }
 
-func matchprefixes(file FileInfo, prefixes []string) bool {
+func matchprefixes(file File, prefixes []string) bool {
 	refpath := strings.TrimPrefix(file.Path, file.Root)
 	refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
 	for len(refpath) > 0 {
@@ -140,20 +138,13 @@ func matchprefixes(file FileInfo, prefixes []string) bool {
 
 /// ----------------------------------------------------------------------- ///
 
-// DefaultFileDecoder is the default file decoder.
-var DefaultFileDecoder = JsonFileDecoder
+// FileHandler is used to handle the loaded files.
+type FileHandler func([]File) ([]File, error)
 
-// FileDecoder is used to decode the data of the file.
-type FileDecoder func(any, FileInfo) error
+// DefaultFileHandler is the default file handler.
+var DefaultFileHandler = noopFileHandler
 
-// JsonFileDecoder is a json decoder which supports to remove the comment lines firstly.
-func JsonFileDecoder(dst any, file FileInfo) (err error) {
-	file.Data = comments.RemoveLineComments(file.Data, comments.CommentSlashes)
-	if len(file.Data) > 0 {
-		err = json.Unmarshal(file.Data, dst)
-	}
-	return
-}
+func noopFileHandler(files []File) ([]File, error) { return files, nil }
 
 /// ----------------------------------------------------------------------- ///
 
@@ -172,12 +163,14 @@ func Md5HexEtagEncoder(changed time.Time) string {
 
 /// ----------------------------------------------------------------------- ///
 
-// FileInfo represents a file.
-type FileInfo struct {
+// File represents a file.
+type File struct {
 	Name string
 	Root string
 	Path string
 	Data []byte
+
+	Extra any
 }
 
 type info struct {
@@ -191,20 +184,15 @@ func (i info) Equal(other info) bool {
 
 type file struct {
 	buf  *bytes.Buffer
-	file FileInfo
+	file File
 
 	last info
 	now  info
 }
 
-type File[T any] struct {
-	Info FileInfo
-	Obj  T
-}
-
 // DirLoader is used to load the resources from the files in a directory.
-type DirLoader[T any] struct {
-	rsc *resource.Resource[[]File[T]]
+type DirLoader struct {
+	rsc *resource.Resource[[]File]
 
 	dir   string
 	last  time.Time
@@ -212,25 +200,24 @@ type DirLoader[T any] struct {
 	files map[string]*file
 
 	filter  FileFilter
-	decoder FileDecoder
-	encoder func(changed time.Time) string
-	updater func([]File[T]) []File[T]
+	handler FileHandler
+	encoder EtagEncoder
 }
 
 // New returns a new DirLoader with the directory.
-func New[T any](dir string) *DirLoader[T] {
+func New(dir string) *DirLoader {
 	dir, err := filepath.Abs(dir)
 	if err != nil {
 		panic(err)
 	}
 
-	return (&DirLoader[T]{
+	return (&DirLoader{
 		dir:   dir,
-		rsc:   resource.New[[]File[T]](),
+		rsc:   resource.New[[]File](),
 		files: make(map[string]*file, 8),
 	}).
 		SetFileFilter(DefaultFileFilter).
-		SetFileDecoder(DefaultFileDecoder).
+		SetFileHandler(DefaultFileHandler).
 		SetEtagEncoder(DefaultEtagEncoder)
 }
 
@@ -241,20 +228,12 @@ func wrappanic(ctx context.Context) {
 }
 
 // RootDir returns the root directory.
-func (l *DirLoader[T]) RootDir() string {
+func (l *DirLoader) RootDir() string {
 	return l.dir
 }
 
-// SetResourceUpdater resets the updater to fix the loaded resource.
-func (l *DirLoader[T]) SetResourceUpdater(updater func([]File[T]) []File[T]) *DirLoader[T] {
-	l.lock.Lock()
-	l.updater = updater
-	l.lock.Unlock()
-	return l
-}
-
 // SetFileFilter resets the file filter.
-func (l *DirLoader[T]) SetFileFilter(filter FileFilter) *DirLoader[T] {
+func (l *DirLoader) SetFileFilter(filter FileFilter) *DirLoader {
 	if filter == nil {
 		panic("DirLoader.SetFileFilter: file filter must not be nil")
 	}
@@ -265,20 +244,20 @@ func (l *DirLoader[T]) SetFileFilter(filter FileFilter) *DirLoader[T] {
 	return l
 }
 
-// SetFileDecoder resets the file decoder.
-func (l *DirLoader[T]) SetFileDecoder(decoder FileDecoder) *DirLoader[T] {
-	if decoder == nil {
-		panic("DirLoader.SetFileDecoder: file decoder must not be nil")
+// SetFileHandler resets the file handler.
+func (l *DirLoader) SetFileHandler(handler FileHandler) *DirLoader {
+	if handler == nil {
+		panic("DirLoader.SetFileHandler: file handler must not be nil")
 	}
 
 	l.lock.Lock()
-	l.decoder = decoder
+	l.handler = handler
 	l.lock.Unlock()
 	return l
 }
 
 // SetEtagEncoder resets the etag encoder.
-func (l *DirLoader[T]) SetEtagEncoder(encoder EtagEncoder) *DirLoader[T] {
+func (l *DirLoader) SetEtagEncoder(encoder EtagEncoder) *DirLoader {
 	if encoder == nil {
 		panic("DirLoader.SetEtagEncoder: etag encoder must not be nil")
 	}
@@ -292,7 +271,7 @@ func (l *DirLoader[T]) SetEtagEncoder(encoder EtagEncoder) *DirLoader[T] {
 // Sync is used to synchronize the resources to the chan ch periodically.
 //
 // If cb is nil, never call it when reload the resources.
-func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]File[T])) {
+func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-chan struct{}, cb func([]File)) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -303,11 +282,11 @@ func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 	var lastEtag string
 	load := func() {
 		defer wrappanic(ctx)
-		slog.LogAttrs(ctx, slog.LevelDebug-4, "start to load the resource", slog.String("type", rsctype))
+		slog.LogAttrs(ctx, slog.LevelDebug-4, "start to load the resource", slog.String("dir", l.dir))
 
 		resources, etag, err := l.Load()
 		if err != nil {
-			slog.Error("fail to load the resources from the local files", "type", rsctype, "err", err)
+			slog.Error("fail to load the resources from the local files", "dir", l.dir, "err", err)
 			return
 		}
 
@@ -341,17 +320,17 @@ func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 	}
 }
 
-func (l *DirLoader[T]) updateEpoch() {
+func (l *DirLoader) updateEpoch() {
 	l.rsc.SetEtag(l.encoder(l.last))
 }
 
 // Resource returns the inner resource.
-func (l *DirLoader[T]) Resource() *resource.Resource[[]File[T]] {
+func (l *DirLoader) Resource() *resource.Resource[[]File] {
 	return l.rsc
 }
 
 // Load scans the files in the directory, loads and returns them if changed.
-func (l *DirLoader[T]) Load() (files []File[T], etag string, err error) {
+func (l *DirLoader) Load() (files []File, etag string, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -367,22 +346,17 @@ func (l *DirLoader[T]) Load() (files []File[T], etag string, err error) {
 		return
 	}
 
-	files = make([]File[T], 0, len(l.files))
-	for path, file := range l.files {
-		var obj T
-		if err = l.decode(&obj, file.file); err != nil {
-			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
-			return
-		}
-		files = append(files, File[T]{Info: file.file, Obj: obj})
+	files = make([]File, 0, len(l.files))
+	for _, file := range l.files {
+		files = append(files, file.file)
 	}
-
 	sort.Slice(files, func(i, j int) bool {
-		return files[i].Info.Path < files[j].Info.Path
+		return files[i].Path < files[j].Path
 	})
 
-	if l.updater != nil {
-		files = l.updater(files)
+	files, err = l.handler(files)
+	if err != nil {
+		return
 	}
 
 	l.rsc.SetResource(files)
@@ -390,14 +364,7 @@ func (l *DirLoader[T]) Load() (files []File[T], etag string, err error) {
 	return
 }
 
-func (l *DirLoader[T]) decode(dst any, file FileInfo) error {
-	if len(file.Data) == 0 {
-		return nil
-	}
-	return l.decoder(dst, file)
-}
-
-func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
+func (l *DirLoader) checkfiles() (changed bool, err error) {
 	last := l.last
 	for path, file := range l.files {
 		if file.last.Equal(file.now) {
@@ -425,7 +392,7 @@ func (l *DirLoader[T]) checkfiles() (changed bool, err error) {
 	return
 }
 
-func (l *DirLoader[T]) _readfile(buf *bytes.Buffer, path string) (err error) {
+func (l *DirLoader) _readfile(buf *bytes.Buffer, path string) (err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return
@@ -437,7 +404,7 @@ func (l *DirLoader[T]) _readfile(buf *bytes.Buffer, path string) (err error) {
 	return
 }
 
-func (l *DirLoader[T]) scanfiles() (err error) {
+func (l *DirLoader) scanfiles() (err error) {
 	files := make(map[string]struct{}, max(8, len(l.files)))
 	err = filepath.WalkDir(l.dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -448,7 +415,7 @@ func (l *DirLoader[T]) scanfiles() (err error) {
 			return nil
 		}
 
-		_file := FileInfo{Name: d.Name(), Root: l.dir, Path: path}
+		_file := File{Name: d.Name(), Root: l.dir, Path: path}
 		if !l.filter(_file) {
 			return nil
 		}
