@@ -169,6 +169,20 @@ var DefaultFileHandler = noopFileHandler
 
 func noopFileHandler(files []File) (any, error) { return files, nil }
 
+// DecodeSliceFileHandler is a file handler, which decodes the file data
+// as a slice and merges them.
+func DecodeSliceFileHandler[T any](files []File) (any, error) {
+	resources := make([]T, 0, len(files)*2)
+	for _, file := range files {
+		var vs []T
+		if err := JsonFileDecoder(&vs, file); err != nil {
+			return files, fmt.Errorf("fail to decode resource file '%s': %w", file.Path, err)
+		}
+		resources = append(resources, vs...)
+	}
+	return resources, nil
+}
+
 /// ----------------------------------------------------------------------- ///
 
 // DefaultEtagEncoder is the default etag encoder.

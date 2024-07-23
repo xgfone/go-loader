@@ -15,7 +15,6 @@
 package dirloader
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -69,7 +68,7 @@ func TestDirLoader(t *testing.T) {
 		{Name: "555", Age: 555},
 	}
 
-	loader := New(root).SetFileHandler(decodefiles[Person])
+	loader := New(root).SetFileHandler(DecodeSliceFileHandler[Person])
 	if _, err = loader.Load(); err != nil {
 		t.Fatal(err)
 	}
@@ -78,16 +77,4 @@ func TestDirLoader(t *testing.T) {
 	if !reflect.DeepEqual(expects, persons) {
 		t.Errorf("expect persons %+v, but got %+v", expects, persons)
 	}
-}
-
-func decodefiles[T any](files []File) (any, error) {
-	resources := make([]T, 0, len(files)*2)
-	for _, file := range files {
-		var vs []T
-		if err := JsonFileDecoder(&vs, file); err != nil {
-			return files, fmt.Errorf("fail to decode resource file '%s': %w", file.Path, err)
-		}
-		resources = append(resources, vs...)
-	}
-	return resources, nil
 }
