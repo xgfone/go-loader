@@ -28,6 +28,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -196,9 +197,14 @@ type file struct {
 	now  info
 }
 
+type DirFile[T any] struct {
+	File
+	Obj T
+}
+
 // DirLoader is used to load the resources from the files in a directory.
 type DirLoader[T any] struct {
-	rsc *resource.Resource[map[string]T]
+	rsc *resource.Resource[[]DirFile[T]]
 
 	dir   string
 	last  time.Time
@@ -208,7 +214,7 @@ type DirLoader[T any] struct {
 	filter  FileFilter
 	decoder FileDecoder
 	encoder func(changed time.Time) string
-	updater func(map[string]T) map[string]T
+	updater func([]DirFile[T]) []DirFile[T]
 }
 
 // New returns a new DirLoader with the directory.
@@ -220,7 +226,7 @@ func New[T any](dir string) *DirLoader[T] {
 
 	return (&DirLoader[T]{
 		dir:   dir,
-		rsc:   resource.New[map[string]T](),
+		rsc:   resource.New[[]DirFile[T]](),
 		files: make(map[string]*file, 8),
 	}).
 		SetFileFilter(DefaultFileFilter).
@@ -240,7 +246,7 @@ func (l *DirLoader[T]) RootDir() string {
 }
 
 // SetResourceUpdater resets the updater to fix the loaded resource.
-func (l *DirLoader[T]) SetResourceUpdater(updater func(map[string]T) map[string]T) *DirLoader[T] {
+func (l *DirLoader[T]) SetResourceUpdater(updater func([]DirFile[T]) []DirFile[T]) *DirLoader[T] {
 	l.lock.Lock()
 	l.updater = updater
 	l.lock.Unlock()
@@ -286,7 +292,7 @@ func (l *DirLoader[T]) SetEtagEncoder(encoder EtagEncoder) *DirLoader[T] {
 // Sync is used to synchronize the resources to the chan ch periodically.
 //
 // If cb is nil, never call it when reload the resources.
-func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func(map[string]T)) {
+func (l *DirLoader[T]) Sync(ctx context.Context, rsctype string, interval time.Duration, reload <-chan struct{}, cb func([]DirFile[T])) {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -340,12 +346,12 @@ func (l *DirLoader[T]) updateEpoch() {
 }
 
 // Resource returns the inner resource.
-func (l *DirLoader[T]) Resource() *resource.Resource[map[string]T] {
+func (l *DirLoader[T]) Resource() *resource.Resource[[]DirFile[T]] {
 	return l.rsc
 }
 
 // Load scans the files in the directory, loads and returns them if changed.
-func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
+func (l *DirLoader[T]) Load() (files []DirFile[T], etag string, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
@@ -357,25 +363,27 @@ func (l *DirLoader[T]) Load() (resources map[string]T, etag string, err error) {
 	if err != nil {
 		return
 	} else if !changed {
-		resources, etag = l.rsc.Get()
+		files, etag = l.rsc.Get()
 		return
 	}
 
-	resources = make(map[string]T, len(l.files))
+	files = make([]DirFile[T], 0, len(l.files))
 	for path, file := range l.files {
-		var resource T
-		if err = l.decode(&resource, file.file); err != nil {
+		var obj T
+		if err = l.decode(&obj, file.file); err != nil {
 			err = fmt.Errorf("fail to decode resource file '%s': %w", path, err)
 			return
 		}
-		resources[path] = resource
+		files = append(files, DirFile[T]{File: file.file, Obj: obj})
 	}
+
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
 
 	if l.updater != nil {
-		resources = l.updater(resources)
+		files = l.updater(files)
 	}
 
-	l.rsc.SetResource(resources)
+	l.rsc.SetResource(files)
 	etag = l.rsc.Etag()
 	return
 }

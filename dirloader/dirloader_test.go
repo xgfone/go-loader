@@ -62,17 +62,24 @@ func TestDirLoader(t *testing.T) {
 		Age  int
 	}
 
-	expects := map[string][]Person{
-		file3: {{Name: "333", Age: 333}},
-		file4: {{Name: "444", Age: 444}},
-		file5: {{Name: "555", Age: 555}},
+	expects := []Person{
+		{Name: "333", Age: 333},
+		{Name: "444", Age: 444},
+		{Name: "555", Age: 555},
 	}
 
 	loader := New[[]Person](root)
 	persons, _, err := loader.Load()
 	if err != nil {
 		t.Fatal(err)
-	} else if !reflect.DeepEqual(expects, persons) {
-		t.Errorf("expect persons %+v, but got %+v", expects, persons)
+	}
+
+	_persons := make([]Person, 0, len(persons))
+	for _, p := range persons {
+		_persons = append(_persons, p.Obj...)
+	}
+
+	if !reflect.DeepEqual(expects, _persons) {
+		t.Errorf("expect persons %+v, but got %+v", expects, _persons)
 	}
 }
