@@ -97,27 +97,27 @@ func JsonFileFilter(file File) bool {
 }
 
 func AllowPrefixFileFilter(prefixes ...string) FileFilter {
-	return matchPreifxFileFilter(true, prefixes)
+	return matchFileFilter(true, prefixes, strings.HasPrefix)
 }
 
 func DenyPrefixFileFilter(prefixes ...string) FileFilter {
-	return matchPreifxFileFilter(false, prefixes)
+	return matchFileFilter(false, prefixes, strings.HasPrefix)
 }
 
-func matchPreifxFileFilter(match bool, prefixes []string) FileFilter {
-	if len(prefixes) == 0 {
+func matchFileFilter(match bool, patterns []string, matchname func(name, pattern string) bool) FileFilter {
+	if len(patterns) == 0 {
 		return alwaysTrueFilter
 	}
 
-	return func(file File) bool {
-		if matchprefixes(file, prefixes) {
+	return func(file File) (ok bool) {
+		if matchfile(file, patterns, matchname) {
 			return match
 		}
 		return !match
 	}
 }
 
-func matchprefixes(file File, prefixes []string) bool {
+func matchfile(file File, patterns []string, match func(name, pattern string) bool) bool {
 	refpath := strings.TrimPrefix(file.Path, file.Root)
 	refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
 	for len(refpath) > 0 {
@@ -129,8 +129,8 @@ func matchprefixes(file File, prefixes []string) bool {
 			name, refpath = refpath[:index], refpath[index+1:]
 		}
 
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(name, prefix) {
+		for _, pattern := range patterns {
+			if match(name, pattern) {
 				return true
 			}
 		}
