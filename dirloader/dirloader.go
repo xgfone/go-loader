@@ -96,12 +96,28 @@ func JsonFileFilter(file File) bool {
 	return strings.HasSuffix(file.Name, ".json")
 }
 
+// AllowPrefixFileFilter returns a file filter which only allows the files
+// that have one of prefixes.
 func AllowPrefixFileFilter(prefixes ...string) FileFilter {
 	return matchFileFilter(true, prefixes, strings.HasPrefix)
 }
 
+// DenyPrefixFileFilter returns a file filter which only allows the files
+// that don't have any of prefixes.
 func DenyPrefixFileFilter(prefixes ...string) FileFilter {
 	return matchFileFilter(false, prefixes, strings.HasPrefix)
+}
+
+// AllowSuffixFileFilter returns a file filter which only allows the files
+// that have one of suffixes.
+func AllowSuffixFileFilter(suffixes ...string) FileFilter {
+	return matchFileFilter(true, suffixes, strings.HasSuffix)
+}
+
+// DenyPrefixFileFilter returns a file filter which only allows the files
+// that don't have any of suffixes.
+func DenySuffixFileFilter(suffixes ...string) FileFilter {
+	return matchFileFilter(false, suffixes, strings.HasSuffix)
 }
 
 func matchFileFilter(match bool, patterns []string, matchname func(name, pattern string) bool) FileFilter {
