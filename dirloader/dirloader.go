@@ -472,6 +472,9 @@ func (l *DirLoader) scanfiles() (err error) {
 		if !ok {
 			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), file: _file}
 			l.files[path] = f
+			slog.Info("dir loader finds a new file", "file", path)
+		} else {
+			slog.Info("dir loader reloads the file", "file", path)
 		}
 
 		f.now = info{modtime: fi.ModTime(), size: fi.Size()}
