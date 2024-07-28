@@ -420,6 +420,7 @@ func (l *DirLoader) checkfiles() (changed bool, err error) {
 			return
 		}
 		file.file.Data = file.buf.Bytes()
+		slog.Info("reload the file", "file", path)
 
 		file.last = file.now
 		if file.last.modtime.After(last) {
@@ -470,11 +471,9 @@ func (l *DirLoader) scanfiles() (err error) {
 
 		f, ok := l.files[path]
 		if !ok {
+			slog.Info("dir loader finds a new file", "file", path)
 			f = &file{buf: bytes.NewBuffer(make([]byte, 0, fi.Size())), file: _file}
 			l.files[path] = f
-			slog.Info("dir loader finds a new file", "file", path)
-		} else {
-			slog.Info("dir loader reloads the file", "file", path)
 		}
 
 		f.now = info{modtime: fi.ModTime(), size: fi.Size()}
