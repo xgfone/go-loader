@@ -340,7 +340,8 @@ func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-c
 
 		changed, err := l.Load()
 		if err != nil {
-			slog.Error("fail to load the resources from the local files", "dir", l.dir, "err", err)
+			slog.Error("dir loader failed to load the resources from the local files",
+				"dir", l.dir, "err", err)
 			return
 		}
 
@@ -420,7 +421,7 @@ func (l *DirLoader) checkfiles() (changed bool, err error) {
 			return
 		}
 		file.file.Data = file.buf.Bytes()
-		slog.Info("reload the file", "file", path)
+		slog.Info("dir loader reloads the file", "file", path)
 
 		file.last = file.now
 		if file.last.modtime.After(last) {
@@ -489,6 +490,7 @@ func (l *DirLoader) scanfiles() (err error) {
 	for path := range l.files {
 		if _, ok := files[path]; !ok {
 			delete(l.files, path)
+			slog.Info("dir loader removes a not-exist file", "file", path)
 		}
 	}
 
