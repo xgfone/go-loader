@@ -28,13 +28,22 @@ import (
 	"github.com/xgfone/go-loader/resource"
 )
 
+// Client is a http client interface.
+type Client interface {
+	Do(*http.Request) (*http.Response, error)
+}
+
+type dofunc func(*http.Request) (*http.Response, error)
+
+func (f dofunc) Do(r *http.Request) (*http.Response, error) { return f(r) }
+
 // UrlLoader is a resource loader based on the url.
 type UrlLoader[T any] struct {
 	rsc *resource.Resource[T]
 	url string
 
 	decode func(data []byte, dst any) error
-	sender func(*http.Request) (*http.Response, error)
+	client Client
 
 	lock sync.Mutex
 }
@@ -49,20 +58,31 @@ func New[T any](url string) *UrlLoader[T] {
 		url:    url,
 		rsc:    resource.New[T](),
 		decode: json.Unmarshal,
-		sender: http.DefaultClient.Do,
+		client: http.DefaultClient,
 	}
 }
 
+// SetClient resets the http client.
+func (l *UrlLoader[T]) SetClient(client Client) *UrlLoader[T] {
+	if client == nil {
+		panic("UrlLoader.SetClient: client must not be nil")
+	}
+
+	l.lock.Lock()
+	l.client = client
+	l.lock.Unlock()
+	return l
+}
+
 // SetSender sets the http request send function.
+//
+// DEPRECATED. Please use SetClient instead.
 func (l *UrlLoader[T]) SetSender(sender func(*http.Request) (*http.Response, error)) *UrlLoader[T] {
 	if sender == nil {
 		panic("UrlLoader.SetSender: request send function must not be nil")
 	}
 
-	l.lock.Lock()
-	l.sender = sender
-	l.lock.Unlock()
-	return l
+	return l.SetClient(dofunc(sender))
 }
 
 // SetDecoder resets the resource decoder.
@@ -167,7 +187,7 @@ func (l *UrlLoader[T]) download() (err error) {
 		req.Header.Set("If-Match", etag)
 	}
 
-	resp, err := l.sender(req)
+	resp, err := l.client.Do(req)
 	if resp != nil {
 		defer resp.Body.Close()
 	}
