@@ -138,13 +138,7 @@ func matchfile(file File, patterns []string, match func(name, pattern string) bo
 	refpath = strings.TrimPrefix(refpath, string(os.PathSeparator))
 	for len(refpath) > 0 {
 		var name string
-		index := strings.IndexByte(refpath, filepath.Separator)
-		if index < 0 {
-			name, refpath = refpath, ""
-		} else {
-			name, refpath = refpath[:index], refpath[index+1:]
-		}
-
+		name, refpath, _ = strings.Cut(refpath, string(filepath.Separator))
 		for _, pattern := range patterns {
 			if match(name, pattern) {
 				return true
