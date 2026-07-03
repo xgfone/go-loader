@@ -184,7 +184,7 @@ func (l *UrlLoader[T]) download() (err error) {
 
 	etag := l.rsc.Etag()
 	if etag != "" {
-		req.Header.Set("If-Match", etag)
+		req.Header.Set("If-None-Match", etag)
 	}
 
 	resp, err := l.client.Do(req)
