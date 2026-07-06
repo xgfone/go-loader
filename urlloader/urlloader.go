@@ -18,6 +18,7 @@ package urlloader
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -50,16 +51,30 @@ type UrlLoader[T any] struct {
 
 // New returns a new UrlLoader with the url.
 func New[T any](url string) *UrlLoader[T] {
-	if url == "" {
-		panic("UrlLoader: url must not be empty")
-	}
-
 	return &UrlLoader[T]{
 		url:    url,
 		rsc:    resource.New[T](),
 		decode: json.Unmarshal,
 		client: http.DefaultClient,
 	}
+}
+
+func (l *UrlLoader[T]) getURL() string {
+	l.lock.Lock()
+	url := l.url
+	l.lock.Unlock()
+	return url
+}
+
+// SetURL resets the url.
+func (l *UrlLoader[T]) SetURL(url string) *UrlLoader[T] {
+	if url == "" {
+		panic("UrlLoader.SetURL: url must be empty")
+	}
+	l.lock.Lock()
+	l.url = url
+	l.lock.Unlock()
+	return l
 }
 
 // SetClient resets the http client.
@@ -126,7 +141,7 @@ func (l *UrlLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 
 		resource, etag, err := l.Load()
 		if err != nil {
-			slog.Error("fail to load the resources from the url", "type", rsctype, "url", l.url, "err", err)
+			slog.Error("fail to load the resources from the url", "type", rsctype, "url", l.getURL(), "err", err)
 			return
 		}
 
@@ -166,18 +181,22 @@ func (l *UrlLoader[T]) Load() (resource T, etag string, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	if err = l.download(); err == nil {
+	if err = l.download(l.url); err == nil {
 		resource, etag = l.rsc.Get()
 	}
 
 	return
 }
 
-func (l *UrlLoader[T]) download() (err error) {
+func (l *UrlLoader[T]) download(url string) (err error) {
+	if url == "" {
+		return errors.New("url is empty")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, l.url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return
 	}
