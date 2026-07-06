@@ -59,7 +59,8 @@ func New[T any](url string) *UrlLoader[T] {
 	}
 }
 
-func (l *UrlLoader[T]) getURL() string {
+// GetURL returns the url.
+func (l *UrlLoader[T]) GetURL() string {
 	l.lock.Lock()
 	url := l.url
 	l.lock.Unlock()
@@ -141,7 +142,7 @@ func (l *UrlLoader[T]) Sync(ctx context.Context, rsctype string, interval time.D
 
 		resource, etag, err := l.Load()
 		if err != nil {
-			slog.Error("fail to load the resources from the url", "type", rsctype, "url", l.getURL(), "err", err)
+			slog.Error("fail to load the resources from the url", "type", rsctype, "url", l.GetURL(), "err", err)
 			return
 		}
 
