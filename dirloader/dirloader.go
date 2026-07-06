@@ -252,16 +252,11 @@ type DirLoader struct {
 
 // New returns a new DirLoader with the directory.
 func New(dir string) *DirLoader {
-	dir, err := filepath.Abs(dir)
-	if err != nil {
-		panic(err)
-	}
-
 	return (&DirLoader{
-		dir:   dir,
 		rsc:   resource.New[any](),
 		files: make(map[string]*file, 8),
 	}).
+		SetRootDir(dir).
 		SetFileFilter(DefaultFileFilter).
 		SetFileHandler(DefaultFileHandler).
 		SetEtagEncoder(DefaultEtagEncoder)
@@ -275,7 +270,24 @@ func wrappanic(ctx context.Context) {
 
 // RootDir returns the root directory.
 func (l *DirLoader) RootDir() string {
-	return l.dir
+	l.lock.Lock()
+	dir := l.dir
+	l.lock.Unlock()
+	return dir
+}
+
+// SetRootDir resets the root directory, which will panic
+// if filepath.Abs(dir) returns an error.
+func (l *DirLoader) SetRootDir(dir string) *DirLoader {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		panic(err)
+	}
+
+	l.lock.Lock()
+	l.dir = dir
+	l.lock.Unlock()
+	return l
 }
 
 // SetFileFilter resets the file filter.
@@ -329,13 +341,15 @@ func (l *DirLoader) Sync(ctx context.Context, interval time.Duration, reload <-c
 	defer ticker.Stop()
 
 	load := func() {
+		dir := l.RootDir()
+
 		defer wrappanic(ctx)
-		slog.LogAttrs(ctx, slog.LevelDebug-4, "start to load the resource", slog.String("dir", l.dir))
+		slog.LogAttrs(ctx, slog.LevelDebug-4, "start to load the resource", slog.String("dir", dir))
 
 		changed, err := l.Load()
 		if err != nil {
 			slog.Error("dir loader failed to load the resources from the local files",
-				"dir", l.dir, "err", err)
+				"dir", dir, "err", err)
 			return
 		}
 
@@ -377,7 +391,7 @@ func (l *DirLoader) Load() (changed bool, err error) {
 	l.lock.Lock()
 	defer l.lock.Unlock()
 
-	if err = l.scanfiles(); err != nil {
+	if err = l.scanfiles(l.dir); err != nil {
 		return
 	}
 
@@ -443,18 +457,18 @@ func (l *DirLoader) _readfile(buf *bytes.Buffer, path string) (err error) {
 	return
 }
 
-func (l *DirLoader) scanfiles() (err error) {
+func (l *DirLoader) scanfiles(dir string) (err error) {
 	files := make(map[string]struct{}, max(8, len(l.files)))
-	err = filepath.WalkDir(l.dir, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return fmt.Errorf("fail to walk dir '%s': %w", l.dir, err)
+			return fmt.Errorf("fail to walk dir '%s': %w", dir, err)
 		}
 
 		if d.IsDir() {
 			return nil
 		}
 
-		_file := File{Name: d.Name(), Root: l.dir, Path: path}
+		_file := File{Name: d.Name(), Root: dir, Path: path}
 		if !l.filter(_file) {
 			return nil
 		}
